@@ -160,6 +160,13 @@ spec:
                   exit 0
                 fi
 
+                if [[ $(./gradlew tasks --all | grep -Eq "^sonarqube") ]]; then
+                    echo "SonarQube task found"
+                else
+                    echo "Skipping SonarQube step, no task defined"
+                    exit 0
+                fi
+
                 ./gradlew -Dsonar.login=${SONARQUBE_USER} -Dsonar.password=${SONARQUBE_PASSWORD} -Dsonar.host.url=${SONARQUBE_URL} sonarqube
                 '''
             }
@@ -187,11 +194,13 @@ spec:
                         PRE_RELEASE="--preRelease=${BRANCH}"
                     fi
 
-                    release-it patch --ci --no-npm ${PRE_RELEASE} \
-                      --hooks.after:release='echo "IMAGE_VERSION=${version}" > ./env-config' \
+                    release-it patch ${PRE_RELEASE} \
+                      --ci \
+                      --no-npm \
                       --verbose \
                       -VV
 
+                    echo "IMAGE_VERSION=$(git describe --abbrev=0 --tags)" > ./env-config
                     echo "IMAGE_NAME=$(basename -s .git `git config --get remote.origin.url` | tr '[:upper:]' '[:lower:]' | sed 's/_/-/g')" >> ./env-config
 
                     cat ./env-config
@@ -271,20 +280,12 @@ spec:
                     . ./env-config
 
                     if [[ "${CLUSTER_TYPE}" == "openshift" ]]; then
-                        HOST=$(kubectl get route/${IMAGE_NAME} --namespace ${ENVIRONMENT_NAME} --output=jsonpath='{ .spec.host }')
-                        PROTOCOL="https"
-                        PORT="443"
+                        ROUTE_HOST=$(kubectl get route/${IMAGE_NAME} --namespace ${ENVIRONMENT_NAME} --output=jsonpath='{ .spec.host }')
+                        URL="https://${ROUTE_HOST}"
                     else
-                        HOST=$(kubectl get ingress/${IMAGE_NAME} --namespace ${ENVIRONMENT_NAME} --output=jsonpath='{ .spec.rules[0].host }')
-                        PROTOCOL="http"
-                        PORT="80"
+                        INGRESS_HOST=$(kubectl get ingress/${IMAGE_NAME} --namespace ${ENVIRONMENT_NAME} --output=jsonpath='{ .spec.rules[0].host }')
+                        URL="http://${INGRESS_HOST}"
                     fi
-
-                    echo "HOST=${HOST}" >> ./env-config
-                    echo "PROTOCOL=${PROTOCOL}" >> ./env-config
-                    echo "PORT=${PORT}" >> ./env-config
-
-                    URL="${PROTOCOL}://${HOST}"
 
                     # sleep for 10 seconds to allow enough time for the server to start
                     sleep 30
@@ -296,30 +297,13 @@ spec:
                         echo "Could not reach health endpoint: ${URL}/health"
                         exit 1
                     fi
-                '''
-            }
-        }
-        container(name: 'jdk11', shell: '/bin/bash') {
-            stage('Pact verify') {
-                sh '''#!/bin/bash
-                    set -x
-                    . ./env-config
 
-                    ./gradlew pactVerify \
-                      -PpactBrokerUrl=${PACTBROKER_URL} \
-                      -PpactProtocol=${PROTOCOL} \
-                      -PpactHost=${HOST} \
-                      -PpactPort=${PORT} \
-                      -Ppact.verifier.publishResults=true
                 '''
             }
-        }
-        container(name: 'ibmcloud', shell: '/bin/bash') {
             stage('Package Helm Chart') {
                 sh '''#!/bin/bash
-                set -x
 
-                if [[ -z "${ARTIFACTORY_ENCRYPT}" ]]; then
+                if [[ -z "${ARTIFACTORY_URL}" ]]; then
                   echo "Skipping Artifactory step as Artifactory is not installed or configured"
                   exit 0
                 fi
