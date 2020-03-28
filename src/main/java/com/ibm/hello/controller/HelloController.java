@@ -25,6 +25,7 @@ import com.ibm.hello.model.GreetingResponse;
 import com.ibm.hello.service.GreetingService;
 import com.ibm.hello.service.ServiceName;
 
+
 @RestController
 public class HelloController {
     private static final Logger LOGGER = LoggerFactory.getLogger(HelloController.class);
